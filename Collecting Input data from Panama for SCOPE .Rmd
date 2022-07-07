@@ -1,0 +1,133 @@
+---
+title: "Collecting_Input_Data_for_SCOPE-Panama"
+author: "Kelvin Acebron"
+date: "`r Sys.Date()`"
+output: github_document
+---
+
+*This document provides systematic gathering of available data from NGEE-Tropics and FLUXNET from Panama sites as input
+values for the SCOPE model.*
+
+### Section 1. Getting estimate of Ball-Berry parameters from NGEE-Tropics dataset (NGT0039)
+
+1.  Read downloaded dataset from NGEE-Tropics. The data came from: NGT0039 Diurnal leaf gas exchange survey, Feb2016-May2016,
+    PA-SLZ, PA-PNM: Panama
+
+```{r}
+library("readxl")
+ENSO_Panama_DiurnalGasEx <- read_excel("/Users/kelvinacebron/Documents/SERC NASA ROSES grant /03 Data/NGEE - T Panama Dataset/NGT0039_2016_Panama_DiurnalGasEx_v2_20220506205826/2016ENSO_Panama_DiurnalGasEx_v2.xlsx", sheet = "2016ENSO_diurnal")
+```
+
+```{r}
+variable_description <- read_excel("/Users/kelvinacebron/Documents/SERC NASA ROSES grant /03 Data/NGEE - T Panama Dataset/NGT0039_2016_Panama_DiurnalGasEx_v2_20220506205826/2016ENSO_Panama_DiurnalGasEx_v2.xlsx", sheet = "DCD")
+print(variable_description)
+```
+
+2.  Changing time from character format to timestamp
+
+```{r}
+ENSO_Panama_DiurnalGasEx$datetime <- as.POSIXlt(strptime(paste(ENSO_Panama_DiurnalGasEx$YYYYMMDD, " ", ENSO_Panama_DiurnalGasEx$HHMMSS), "%Y%m%d %H:%M:%S"))
+```
+
+3.  Removing non-alphanumeric characters from the column names (Important in succeeding operations)
+
+```{r}
+names(ENSO_Panama_DiurnalGasEx) <- gsub(x = names(ENSO_Panama_DiurnalGasEx), pattern = "/", replacement = '.')
+print(ENSO_Panama_DiurnalGasEx)
+```
+
+3.  Plotting Photosynthesis across different species
+
+```{r}
+library("ggplot2")
+ggplot(ENSO_Panama_DiurnalGasEx, aes(x=as.POSIXct(HHMMSS, format = "%H:%M"), y=Photo, group = Species)) +
+  geom_line(aes(color=Species)) + ylab("Photosynthesis") + xlab("Time of day") + theme_classic()
+```
+
+4.  Plotting Ball and Berry parameter
+
+```{r}
+library("ggplot2")
+ggplot(ENSO_Panama_DiurnalGasEx, aes(x=as.POSIXct(HHMMSS, format = "%H:%M"), y = AHs.Cs, group = Species)) +
+  geom_line(aes(color=Species)) + ylab("Ball and Berry Parameter") + xlab("Time of day") + theme_classic()
+```
+
+5.  Since Photosynthesis and Ball-Berry parameter seems to have similar trend, I plot the correlation between the two
+    variables, Ball-Berry as the dependent variable.
+
+```{r}
+ggplot(ENSO_Panama_DiurnalGasEx, aes(x=AHs.Cs, y=Photo, group = Species)) + geom_point(aes(color=Species)) + ylab("Photosynthesis") + xlab("Ball-Berry parameter") + facet_wrap(~Species, ncol=5, nrow=5)
+```
+
+6.  Checking where and how the heck this Ball-Berry parameter was derived. This value was not in the list of output in the
+    latest licor model LI6800 (see: <https://www.licor.com/env/support/LI-6800/topics/symbols.html#Summary>) and did not find
+    also in LI6400 manual
+
+So, lets derive the ratio of Hs (H20 Sample, from regression) / Cs (CO2 sample, from regression) and multiply to Anet (net
+assimilation) and see if this will be equal to the output AHs/Cs. Oh wait, there was no Hs and Cs provided in the dataset.
+But, I suppose we can use RH_S and CO2S.
+
+```{r}
+ENSO_Panama_DiurnalGasEx$AHs.Cs_recompute <- ENSO_Panama_DiurnalGasEx$Photo*(ENSO_Panama_DiurnalGasEx$RH_S / ENSO_Panama_DiurnalGasEx$CO2S)
+```
+
+Lets then plot the AHs.Cs and the new AHs.Cs_recompute
+
+```{r}
+ggplot(ENSO_Panama_DiurnalGasEx, aes(x=AHs.Cs, y=AHs.Cs_recompute, group = Species)) +
+  geom_point(aes(color=Species))
+```
+
+OK. so its a different value, 100-fold higher than the provided data. Lets see what happens if we compute the slope m from
+the relationship between gs and AHs.Cs_recompute. This information is based on this review paper:
+<https://onlinelibrary.wiley.com/doi/10.1111/pce.12871> by Dennis Baldocchi from UC Berkeley
+
+```{r}
+ggplot(ENSO_Panama_DiurnalGasEx, aes(x=AHs.Cs_recompute, y = Cond, group = Species)) +
+  geom_point(aes(color=Species)) + 
+  geom_smooth(method = 'lm', formula = y~x) +
+  ylab("Stomatal conductance") + xlab("A(Hs/Cs)") + theme_classic()
+
+BBmodel_recompute <- lm(Cond ~ AHs.Cs_recompute, data = ENSO_Panama_DiurnalGasEx)
+print(summary(BBmodel_recompute))
+```
+
+quickly looking at the results, the value for g0 is reasonable within the expected range, but the slope m is almost 100-fold
+smaller too in comparison to some reported values.
+
+7.  Therefore, I will try to use the original data in the spreadsheet (AHs.Cs), but now doing linear regression based on
+    species as follows:
+
+```{r}
+library(dplyr)
+library(broom)
+Species_BBmodels = ENSO_Panama_DiurnalGasEx %>% 
+  nest_by(Species) %>%
+  mutate(BBmodels = list(lm(Cond ~ AHs.Cs, data = data))) %>%
+  summarise(tidy(BBmodels))
+
+Species_BBmodels
+
+```
+
+Some species provided a negative intercept which does not makes sense, so we will drop those values (for now I will leave it
+as it is). But the slope values now are much more reasonable than by computing it myself. (NOTE: I still need to find out how
+to properly compute for this parameter)
+
+```{r}
+BBmodel <- lm(Cond ~ AHs.Cs, data = ENSO_Panama_DiurnalGasEx)
+print(BBmodel)
+```
+
+For now, I will use the values above g0 = 0.03 and m = 5.9 as input values for SCOPE.
+
+
+### Section 2. Getting estimate of Vcmax parameter from NGEE-Tropics dataset
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview*
+button or press *Cmd+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run
+any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
