@@ -1,0 +1,68 @@
+---
+title: "Locating tree species at SERC"
+author: "Kelvin Acebron"
+date: "`r Sys.Date()`"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Uploading data
+```{r}
+ForestGEO_SERC <- read.csv("/Users/kelvinacebron/Documents/SERC NASA ROSES grant /03 Data/FORESTGEO SERC/SERC_censuses_with_UTMs_5_apr_2022.csv")
+print(str(ForestGEO_SERC))
+```
+#### List all Families
+```{r}
+levels(factor(ForestGEO_SERC$Family))
+```
+There are 37 different treee families
+
+#### List all Genus
+```{r}
+levels(factor(ForestGEO_SERC$Genus))
+```
+Theres a total of 53 different Genus
+
+#### List all Species present in the data
+```{r}
+levels(factor(interaction(ForestGEO_SERC$Genus,ForestGEO_SERC$SpeciesName)))
+```
+Theres a total of 80 different tree species, with two unidentified Genus and unknown species
+
+#### Now lets analyse the data based on available R package from ForestGEO website
+
+Installation
+Make sure your R environment is as follows:
+
+R version is recent
+All packages are updated (run update.packages(); maybe use ask = FALSE)
+No other R session is running
+Current R session is clean (click Session > Restart R)
+Install the latest stable version of fgeo from CRAN with:
+
+install.packages("fgeo")
+Or install the development version of fgeo from GitHub with:
+
+# install.packages("devtools")
+devtools::install_github("forestgeo/fgeo.x")
+
+```{r}
+library(fgeo)
+dff <- ForestGEO_SERC
+sp.n <- length(unique(dff$Mnemonic))
+dbh <- as.numeric(dff$DBH_1)
+plot(dff$PX, dff$PY, col = heat.colors(sp.n)[factor(dff$Mnemonic)], cex = log(dbh/ 20), pch = 19)
+
+sp.table <- sort(table(dff$Mnemonic), decreasing = TRUE)
+barplot((sp.table))
+
+dff.large <- subset(dff, DBH_1 >= 25)
+sp.table <- sort(table(dff.large$Mnemonic), decreasing = TRUE)
+barplot((sp.table))
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
